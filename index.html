@@ -1,0 +1,843 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Linux Epoll Real-Time Telemetry Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #090d16;
+      --panel-bg: rgba(17, 24, 39, 0.75);
+      --panel-border: rgba(255, 255, 255, 0.08);
+      --accent-blue: #38bdf8;
+      --accent-cyan: #06b6d4;
+      --accent-green: #10b981;
+      --accent-amber: #f59e0b;
+      --accent-red: #ef4444;
+      --accent-purple: #a855f7;
+      --text-main: #f3f4f6;
+      --text-muted: #9ca3af;
+      --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg-dark);
+      background-image: 
+        radial-gradient(at 0% 0%, rgba(56, 189, 248, 0.05) 0px, transparent 50%),
+        radial-gradient(at 100% 100%, rgba(168, 85, 247, 0.05) 0px, transparent 50%);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    /* Header */
+    header {
+      background: rgba(15, 23, 42, 0.8);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--panel-border);
+      padding: 16px 28px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .brand-icon {
+      width: 40px;
+      height: 40px;
+      background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 20px;
+      box-shadow: 0 0 20px rgba(6, 182, 212, 0.3);
+    }
+
+    .brand-text h1 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      background: linear-gradient(to right, #ffffff, #94a3b8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .brand-text p {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .status-pills {
+      display: flex;
+      gap: 12px;
+    }
+
+    .pill {
+      background: rgba(30, 41, 59, 0.8);
+      border: 1px solid var(--panel-border);
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-family: var(--font-mono);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent-green);
+      box-shadow: 0 0 8px var(--accent-green);
+    }
+
+    /* Action Controls Bar */
+    .controls-bar {
+      background: rgba(15, 23, 42, 0.5);
+      border-bottom: 1px solid var(--panel-border);
+      padding: 14px 28px;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .btn {
+      background: rgba(30, 41, 59, 0.9);
+      color: var(--text-main);
+      border: 1px solid var(--panel-border);
+      padding: 9px 18px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s ease;
+    }
+
+    .btn:hover {
+      background: rgba(51, 65, 85, 0.9);
+      border-color: var(--accent-cyan);
+      transform: translateY(-1px);
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #0284c7, #06b6d4);
+      border: none;
+      box-shadow: 0 4px 14px rgba(6, 182, 212, 0.3);
+    }
+    .btn-primary:hover {
+      background: linear-gradient(135deg, #0369a1, #0891b2);
+    }
+
+    .btn-amber {
+      background: rgba(245, 158, 11, 0.15);
+      border-color: rgba(245, 158, 11, 0.4);
+      color: #fbbf24;
+    }
+    .btn-amber:hover {
+      background: rgba(245, 158, 11, 0.25);
+    }
+
+    .btn-danger {
+      background: rgba(239, 68, 68, 0.15);
+      border-color: rgba(239, 68, 68, 0.4);
+      color: #fca5a5;
+    }
+    .btn-danger:hover {
+      background: rgba(239, 68, 68, 0.25);
+    }
+
+    /* Main Container Layout */
+    .dashboard-container {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: auto auto;
+      gap: 20px;
+      padding: 24px;
+      flex: 1;
+    }
+
+    .panel {
+      background: var(--panel-bg);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--panel-border);
+      border-radius: 14px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+    }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--panel-border);
+    }
+
+    .panel-title {
+      font-size: 0.95rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--text-main);
+    }
+
+    .panel-title-icon {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+    }
+
+    /* Canvas / Topology Diagram */
+    #topologyCanvas {
+      width: 100%;
+      height: 320px;
+      border-radius: 8px;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    /* Interest Table */
+    .epoll-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+
+    .epoll-table th {
+      text-align: left;
+      padding: 10px 14px;
+      background: rgba(30, 41, 59, 0.5);
+      color: var(--text-muted);
+      font-weight: 500;
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      border-bottom: 1px solid var(--panel-border);
+    }
+
+    .epoll-table td {
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      font-family: var(--font-mono);
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+
+    .badge-in { background: rgba(56, 189, 248, 0.15); color: var(--accent-blue); }
+    .badge-out { background: rgba(239, 68, 68, 0.2); color: var(--accent-red); border: 1px solid var(--accent-red); }
+    .badge-et { background: rgba(168, 85, 247, 0.15); color: var(--accent-purple); }
+
+    /* Client Buffer Cards Grid */
+    .buffers-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 14px;
+      max-height: 320px;
+      overflow-y: auto;
+      padding-right: 6px;
+    }
+
+    .client-card {
+      background: rgba(30, 41, 59, 0.6);
+      border: 1px solid var(--panel-border);
+      border-radius: 10px;
+      padding: 14px;
+      transition: all 0.2s ease;
+    }
+
+    .client-card.backpressure {
+      border-color: var(--accent-red);
+      box-shadow: 0 0 15px rgba(239, 68, 68, 0.2);
+    }
+
+    .card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+
+    .card-fd {
+      font-family: var(--font-mono);
+      font-weight: 600;
+      color: var(--accent-cyan);
+    }
+
+    .progress-bar-bg {
+      height: 10px;
+      background: rgba(15, 23, 42, 0.8);
+      border-radius: 5px;
+      overflow: hidden;
+      margin-bottom: 8px;
+      position: relative;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--accent-cyan), var(--accent-green));
+      border-radius: 5px;
+      transition: width 0.2s ease, background 0.2s ease;
+    }
+
+    .progress-bar-fill.warning {
+      background: linear-gradient(90deg, var(--accent-amber), var(--accent-red));
+    }
+
+    .card-meta {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+    }
+
+    /* Event Telemetry Log */
+    .log-container {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      background: rgba(10, 15, 26, 0.9);
+      border-radius: 8px;
+      padding: 12px;
+      height: 280px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .log-item {
+      display: flex;
+      gap: 12px;
+      padding: 4px 8px;
+      border-radius: 4px;
+      align-items: center;
+    }
+
+    .log-item:hover {
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .log-time { color: var(--text-muted); font-size: 0.75rem; }
+    .log-type { width: 140px; font-weight: 600; }
+    .log-details { color: #d1d5db; flex: 1; }
+
+    /* Responsive adjustment */
+    @media (max-width: 1024px) {
+      .dashboard-container { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header Bar -->
+  <header>
+    <div class="brand">
+      <div class="brand-icon">⚡</div>
+      <div class="brand-text">
+        <h1>Linux Epoll Real-Time Telemetry</h1>
+        <p>WSL2 Debian Native Kernel Monitor</p>
+      </div>
+    </div>
+    <div class="status-pills">
+      <div class="pill">
+        <span class="status-dot"></span>
+        <span id="serverStatusText">Server Active (Port 8080)</span>
+      </div>
+      <div class="pill">
+        <span>Listening FD: <strong id="listenFdVal">3</strong></span>
+      </div>
+      <div class="pill">
+        <span>Epoll FD: <strong id="epollFdVal">4</strong></span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Interactive Controls Bar -->
+  <div class="controls-bar">
+    <button id="btnSpawnClient" class="btn btn-primary">
+      ➕ Spawn Client Connection
+    </button>
+    <button id="btnSendData" class="btn">
+      💬 Send 1 KB Echo Payload
+    </button>
+    <button id="btnFloodData" class="btn btn-amber">
+      💥 Send 16 KB Flood (Trigger Buffer)
+    </button>
+    <button id="btnToggleChoke" class="btn btn-danger">
+      🛑 Toggle Socket Read Choke (Backpressure)
+    </button>
+    <button id="btnCloseClients" class="btn" style="margin-left: auto;">
+      🧹 Close All Clients
+    </button>
+  </div>
+
+  <!-- Dashboard Main Grid -->
+  <div class="dashboard-container">
+
+    <!-- Panel 1: Active Socket & Epoll Topology Canvas -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <div class="panel-title-icon" style="background: rgba(56, 189, 248, 0.2); color: var(--accent-blue);">🕸️</div>
+          Epoll Architecture & Node Topology
+        </div>
+        <span style="font-size: 0.75rem; color: var(--text-muted);">Real-time Particle Flow</span>
+      </div>
+      <canvas id="topologyCanvas"></canvas>
+    </div>
+
+    <!-- Panel 2: Epoll Monitored Interest Table -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <div class="panel-title-icon" style="background: rgba(168, 85, 247, 0.2); color: var(--accent-purple);">📋</div>
+          Kernel Epoll Interest Set (`epoll_ctl`)
+        </div>
+        <span style="font-size: 0.75rem; color: var(--text-muted);" id="activeFdCount">Monitored FDs: 1</span>
+      </div>
+      <table class="epoll-table">
+        <thead>
+          <tr>
+            <th>FD</th>
+            <th>SOCKET TYPE</th>
+            <th>MONITORED FLAGS</th>
+            <th>BACKPRESSURE</th>
+          </tr>
+        </thead>
+        <tbody id="epollTableBody">
+          <tr>
+            <td style="color: var(--accent-green);">3</td>
+            <td>TCP Listening Socket</td>
+            <td><span class="badge badge-in">EPOLLIN</span> <span class="badge badge-et">EPOLLET</span></td>
+            <td><span style="color: var(--text-muted);">Ready (Accepting)</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Panel 3: Client Write Buffer & Backpressure Gauges -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <div class="panel-title-icon" style="background: rgba(245, 158, 11, 0.2); color: var(--accent-amber);">📊</div>
+          Per-Client Write Buffers & Backpressure
+        </div>
+        <span style="font-size: 0.75rem; color: var(--text-muted);">Capacity: 4096 Bytes / Client</span>
+      </div>
+      <div class="buffers-grid" id="buffersGrid">
+        <div style="color: var(--text-muted); font-size: 0.85rem; padding: 20px; text-align: center; grid-column: 1/-1;">
+          No active client connections. Click <strong>"Spawn Client Connection"</strong> above to test!
+        </div>
+      </div>
+    </div>
+
+    <!-- Panel 4: Real-time Event Telemetry Stream -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <div class="panel-title-icon" style="background: rgba(16, 185, 129, 0.2); color: var(--accent-green);">📡</div>
+          Real-Time Event Telemetry Stream
+        </div>
+        <button id="btnClearLog" class="btn" style="padding: 4px 10px; font-size: 0.75rem;">Clear Log</button>
+      </div>
+      <div class="log-container" id="logContainer">
+        <!-- Log entries populated live -->
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // State management
+    const clientStates = {};
+    let isChoked = false;
+    let activeClientsList = [];
+
+    // DOM Elements
+    const logContainer = document.getElementById('logContainer');
+    const epollTableBody = document.getElementById('epollTableBody');
+    const buffersGrid = document.getElementById('buffersGrid');
+    const activeFdCount = document.getElementById('activeFdCount');
+
+    // Setup Canvas Topology Animation
+    const canvas = document.getElementById('topologyCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    function resizeCanvas() {
+      canvas.width = canvas.parentElement.clientWidth - 40;
+      canvas.height = 320;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    const particles = [];
+
+    function addParticle(fromX, fromY, toX, toY, color) {
+      particles.push({
+        x: fromX, y: fromY,
+        startX: fromX, startY: fromY,
+        endX: toX, endY: toY,
+        progress: 0,
+        speed: 0.03 + Math.random() * 0.02,
+        color: color
+      });
+    }
+
+    function drawTopology() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const centerX = canvas.width / 2;
+      const centerY = 160;
+
+      // Draw Epoll Core Node (Center)
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, 36, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(168, 85, 247, 0.15)';
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#a855f7';
+      ctx.stroke();
+
+      ctx.fillStyle = '#f3f4f6';
+      ctx.font = '600 13px Inter';
+      ctx.textAlign = 'center';
+      ctx.fillText('Epoll Core', centerX, centerY - 4);
+      ctx.font = '400 11px JetBrains Mono';
+      ctx.fillStyle = '#a855f7';
+      ctx.fillText('epoll_fd: 4', centerX, centerY + 14);
+
+      // Draw Listening Socket Node (Left)
+      const listenX = 90;
+      const listenY = centerY;
+      ctx.beginPath();
+      ctx.arc(listenX, listenY, 28, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(16, 185, 129, 0.15)';
+      ctx.fill();
+      ctx.strokeStyle = '#10b981';
+      ctx.stroke();
+
+      ctx.fillStyle = '#f3f4f6';
+      ctx.font = '600 12px Inter';
+      ctx.fillText('Listen Socket', listenX, listenY - 4);
+      ctx.font = '400 10px JetBrains Mono';
+      ctx.fillStyle = '#10b981';
+      ctx.fillText('fd: 3 (8080)', listenX, listenY + 12);
+
+      // Connect Listen to Epoll
+      ctx.beginPath();
+      ctx.moveTo(listenX + 28, listenY);
+      ctx.lineTo(centerX - 36, centerY);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Draw Connected Client Nodes (Right Arc)
+      const fds = Object.keys(clientStates);
+      const count = fds.length;
+
+      fds.forEach((fd, idx) => {
+        const angle = (idx - (count - 1) / 2) * 0.45;
+        const clientX = centerX + 180 + Math.cos(angle) * 40;
+        const clientY = centerY + Math.sin(angle) * 80;
+
+        clientStates[fd].x = clientX;
+        clientStates[fd].y = clientY;
+
+        // Line to epoll
+        ctx.beginPath();
+        ctx.moveTo(centerX + 36, centerY);
+        ctx.lineTo(clientX - 24, clientY);
+        ctx.strokeStyle = clientStates[fd].epollout ? 'rgba(239, 68, 68, 0.4)' : 'rgba(56, 189, 248, 0.2)';
+        ctx.lineWidth = clientStates[fd].epollout ? 2 : 1;
+        ctx.stroke();
+
+        // Node Circle
+        ctx.beginPath();
+        ctx.arc(clientX, clientY, 24, 0, Math.PI * 2);
+        ctx.fillStyle = clientStates[fd].epollout ? 'rgba(239, 68, 68, 0.2)' : 'rgba(56, 189, 248, 0.15)';
+        ctx.fill();
+        ctx.strokeStyle = clientStates[fd].epollout ? '#ef4444' : '#38bdf8';
+        ctx.stroke();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '600 11px JetBrains Mono';
+        ctx.fillText(`fd: ${fd}`, clientX, clientY + 4);
+      });
+
+      // Animate Particles
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.progress += p.speed;
+        if (p.progress >= 1) {
+          particles.splice(i, 1);
+          continue;
+        }
+
+        const currX = p.startX + (p.endX - p.startX) * p.progress;
+        const currY = p.startY + (p.endY - p.startY) * p.progress;
+
+        ctx.beginPath();
+        ctx.arc(currX, currY, 4, 0, Math.PI * 2);
+        ctx.fillStyle = p.color;
+        ctx.shadowColor = p.color;
+        ctx.shadowBlur = 8;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+
+      requestAnimationFrame(drawTopology);
+    }
+    requestAnimationFrame(drawTopology);
+
+    // Event Handling
+    const sse = new EventSource('/events');
+
+    sse.onmessage = (e) => {
+      try {
+        const event = JSON.parse(e.data);
+        handleEvent(event);
+      } catch (err) {
+        console.error("Failed to parse SSE payload", err);
+      }
+    };
+
+    function handleEvent(ev) {
+      appendLog(ev);
+
+      if (ev.type === 'accept') {
+        clientStates[ev.fd] = {
+          fd: ev.fd,
+          write_len: 0,
+          write_pos: 0,
+          capacity: 4096,
+          epollout: false
+        };
+        addParticle(90, 160, canvas.width / 2, 160, '#10b981');
+        updateUI();
+      } 
+      else if (ev.type === 'read') {
+        if (clientStates[ev.fd]) {
+          clientStates[ev.fd].write_len = ev.write_len;
+          clientStates[ev.fd].write_pos = ev.write_pos;
+          const st = clientStates[ev.fd];
+          addParticle(st.x || canvas.width / 2 + 100, st.y || 160, canvas.width / 2, 160, '#38bdf8');
+        }
+        updateUI();
+      }
+      else if (ev.type === 'write') {
+        if (clientStates[ev.fd]) {
+          clientStates[ev.fd].write_len = ev.write_len;
+          clientStates[ev.fd].write_pos = ev.write_pos;
+          const st = clientStates[ev.fd];
+          addParticle(canvas.width / 2, 160, st.x || canvas.width / 2 + 100, st.y || 160, '#10b981');
+        }
+        updateUI();
+      }
+      else if (ev.type === 'backpressure') {
+        if (clientStates[ev.fd]) {
+          clientStates[ev.fd].epollout = ev.active;
+          clientStates[ev.fd].write_len = ev.write_len;
+          clientStates[ev.fd].write_pos = ev.write_pos;
+        }
+        updateUI();
+      }
+      else if (ev.type === 'close') {
+        delete clientStates[ev.fd];
+        updateUI();
+      }
+    }
+
+    function updateUI() {
+      const fds = Object.keys(clientStates);
+      activeFdCount.textContent = `Monitored FDs: ${fds.length + 1}`;
+
+      // Update Epoll Table
+      let tableHtml = `
+        <tr>
+          <td style="color: var(--accent-green);">3</td>
+          <td>TCP Listening Socket</td>
+          <td><span class="badge badge-in">EPOLLIN</span> <span class="badge badge-et">EPOLLET</span></td>
+          <td><span style="color: var(--text-muted);">Ready (Accepting)</span></td>
+        </tr>
+      `;
+
+      fds.forEach(fd => {
+        const c = clientStates[fd];
+        const flags = c.epollout 
+          ? '<span class="badge badge-in">EPOLLIN</span> <span class="badge badge-out">EPOLLOUT</span> <span class="badge badge-et">EPOLLET</span>'
+          : '<span class="badge badge-in">EPOLLIN</span> <span class="badge badge-et">EPOLLET</span>';
+        
+        const bpText = c.epollout
+          ? '<strong style="color: var(--accent-red);">🔴 EPOLLOUT ARMED (EAGAIN)</strong>'
+          : '<span style="color: var(--accent-green);">🟢 Normal</span>';
+
+        tableHtml += `
+          <tr>
+            <td style="color: var(--accent-cyan); font-weight: 600;">${fd}</td>
+            <td>Connected TCP Client</td>
+            <td>${flags}</td>
+            <td>${bpText}</td>
+          </tr>
+        `;
+      });
+      epollTableBody.innerHTML = tableHtml;
+
+      // Update Buffers Grid
+      if (fds.length === 0) {
+        buffersGrid.innerHTML = `
+          <div style="color: var(--text-muted); font-size: 0.85rem; padding: 20px; text-align: center; grid-column: 1/-1;">
+            No active client connections. Click <strong>"Spawn Client Connection"</strong> above to test!
+          </div>
+        `;
+        return;
+      }
+
+      let gridHtml = '';
+      fds.forEach(fd => {
+        const c = clientStates[fd];
+        const pendingBytes = c.write_len - c.write_pos;
+        const pct = Math.min(100, Math.round((pendingBytes / c.capacity) * 100));
+
+        gridHtml += `
+          <div class="client-card ${c.epollout ? 'backpressure' : ''}">
+            <div class="card-head">
+              <span class="card-fd">Socket Client FD: ${fd}</span>
+              <span class="badge ${c.epollout ? 'badge-out' : 'badge-in'}">
+                ${c.epollout ? 'EPOLLOUT Armed' : 'EPOLLIN'}
+              </span>
+            </div>
+            <div class="progress-bar-bg">
+              <div class="progress-bar-fill ${c.epollout || pct > 50 ? 'warning' : ''}" style="width: ${pct}%;"></div>
+            </div>
+            <div class="card-meta">
+              <span>Pending: ${pendingBytes} B</span>
+              <span>Buffer Utilization: ${pct}%</span>
+            </div>
+          </div>
+        `;
+      });
+      buffersGrid.innerHTML = gridHtml;
+    }
+
+    function appendLog(ev) {
+      const row = document.createElement('div');
+      row.className = 'log-item';
+
+      const now = new Date();
+      const timeStr = now.toTimeString().split(' ')[0] + '.' + String(now.getMilliseconds()).padStart(3, '0');
+
+      let typeBadge = '';
+      let details = '';
+
+      switch(ev.type) {
+        case 'accept':
+          typeBadge = '<span style="color: var(--accent-green)">[ACCEPT]</span>';
+          details = `New client connection accepted on fd ${ev.fd}`;
+          break;
+        case 'read':
+          typeBadge = '<span style="color: var(--accent-blue)">[READ]</span>';
+          details = `Read ${ev.bytes_read} bytes from fd ${ev.fd} (write_len: ${ev.write_len} B)`;
+          break;
+        case 'write':
+          typeBadge = '<span style="color: var(--accent-cyan)">[WRITE]</span>';
+          details = `Wrote ${ev.bytes_written} bytes to fd ${ev.fd} (remaining: ${ev.write_len - ev.write_pos} B)`;
+          break;
+        case 'backpressure':
+          typeBadge = '<span style="color: var(--accent-red)">[BACKPRESSURE]</span>';
+          details = ev.active 
+            ? `EAGAIN on fd ${ev.fd}! Kernel send buffer full. Registered EPOLLOUT.` 
+            : `Write buffer fully drained for fd ${ev.fd}. Unregistered EPOLLOUT.`;
+          break;
+        case 'close':
+          typeBadge = '<span style="color: var(--accent-amber)">[CLOSE]</span>';
+          details = `Client connection on fd ${ev.fd} closed`;
+          break;
+        default:
+          typeBadge = `<span style="color: var(--text-muted)">[${ev.type.toUpperCase()}]</span>`;
+          details = JSON.stringify(ev);
+      }
+
+      row.innerHTML = `
+        <span class="log-time">${timeStr}</span>
+        <span class="log-type">${typeBadge}</span>
+        <span class="log-details">${details}</span>
+      `;
+
+      logContainer.appendChild(row);
+      logContainer.scrollTop = logContainer.scrollHeight;
+    }
+
+    // Action button listeners
+    document.getElementById('btnSpawnClient').onclick = async () => {
+      const res = await fetch('/api/spawn_client');
+      const data = await res.json();
+      if (data.client_id) {
+        activeClientsList.push(data.client_id);
+      }
+    };
+
+    document.getElementById('btnSendData').onclick = async () => {
+      await fetch('/api/send_data?size=1024');
+    };
+
+    document.getElementById('btnFloodData').onclick = async () => {
+      await fetch('/api/send_data?size=16384');
+    };
+
+    document.getElementById('btnToggleChoke').onclick = async () => {
+      isChoked = !isChoked;
+      await fetch(`/api/choke_client?choke=${isChoked}`);
+      const btn = document.getElementById('btnToggleChoke');
+      btn.textContent = isChoked ? '▶️ Unchoke Socket Reads (Flush Buffer)' : '🛑 Toggle Socket Read Choke (Backpressure)';
+    };
+
+    document.getElementById('btnCloseClients').onclick = async () => {
+      await fetch('/api/close_clients');
+      activeClientsList = [];
+    };
+
+    document.getElementById('btnClearLog').onclick = () => {
+      logContainer.innerHTML = '';
+    };
+  </script>
+</body>
+</html>
