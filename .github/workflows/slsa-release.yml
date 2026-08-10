@@ -1,0 +1,19 @@
+name: SLSA Go Releaser
+
+on:
+  push:
+    tags:
+      - 'v*' # Triggers whenever you push a version tag like v1.0.0
+
+permissions: {}
+
+jobs:
+  # Step 1: Build the binaries with SLSA provenance
+  build:
+    permissions:
+      id-token: write # Needed for cryptographic signing via Sigstore
+      contents: read # Needed to checkout source code
+      actions: read  # Needed to inspect workflow execution details
+    uses: slsa-framework/slsa-github-generator/.github/workflows/builder_go_slsa3.yml@v2.0.0
+    with:
+      config-file: .slsa-goreleaser.yml
