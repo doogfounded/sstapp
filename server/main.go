@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -21,19 +22,20 @@ const (
 // --- JSON telemetry events (same format as epoll_visual_server.c) ---
 
 type TelemetryEvent struct {
-	Type         string `json:"type"`
-	FD           int    `json:"fd,omitempty"`
-	Message      string `json:"message,omitempty"`
-	Port         int    `json:"port,omitempty"`
-	ListenFD     int    `json:"listen_fd,omitempty"`
-	EpollFD      int    `json:"epoll_fd,omitempty"`
-	Nfds         int    `json:"nfds,omitempty"`
-	BytesRead    int    `json:"bytes_read,omitempty"`
-	BytesWritten int    `json:"bytes_written,omitempty"`
-	WriteLen     int    `json:"write_len,omitempty"`
-	WritePos     int    `json:"write_pos,omitempty"`
-	Capacity     int    `json:"capacity,omitempty"`
-	Active       *bool  `json:"active,omitempty"`
+	Type          string `json:"type"`
+	FD            int    `json:"fd,omitempty"`
+	Message       string `json:"message,omitempty"`
+	Port          int    `json:"port,omitempty"`
+	ListenFD      int    `json:"listen_fd,omitempty"`
+	EpollFD       int    `json:"epoll_fd,omitempty"`
+	Nfds          int    `json:"nfds,omitempty"`
+	BytesRead     int    `json:"bytes_read,omitempty"`
+	BytesWritten  int    `json:"bytes_written,omitempty"`
+	WriteLen      int    `json:"write_len,omitempty"`
+	WritePos      int    `json:"write_pos,omitempty"`
+	Capacity      int    `json:"capacity,omitempty"`
+	Active        *bool  `json:"active,omitempty"`
+	ActiveClients int    `json:"active_clients,omitempty"`
 }
 
 func emit(event TelemetryEvent) {
@@ -91,15 +93,22 @@ func (s *Server) removeClient(fd int) {
 	s.clientsMu.Unlock()
 }
 
+func (s *Server) clientCount() int {
+	s.clientsMu.Lock()
+	defer s.clientsMu.Unlock()
+	return len(s.clients)
+}
+
 func (s *Server) handleClient(conn net.Conn) {
 	fd := s.nextClientFD()
 	client := newClient(conn)
 	s.addClient(fd, client)
 
 	emit(TelemetryEvent{
-		Type: "accept",
-		FD:   fd,
-		Port: port,
+		Type:          "accept",
+		FD:            fd,
+		Port:          port,
+		ActiveClients: s.clientCount(),
 	})
 	log.Printf("[Server] New client connected on fd %d", fd)
 
@@ -156,23 +165,26 @@ func (s *Server) handleRead(fd int, client *Client, data []byte) {
 }
 
 func (s *Server) handleReadError(fd int, client *Client, err error) {
+	client.Conn.Close()
+	s.removeClient(fd)
+	count := s.clientCount()
+
 	if err == io.EOF {
 		log.Printf("[Server] Client fd %d disconnected", fd)
 		emit(TelemetryEvent{
-			Type: "close",
-			FD:   fd,
+			Type:          "close",
+			FD:            fd,
+			ActiveClients: count,
 		})
 	} else {
 		log.Printf("[Server] Client fd %d error: %v", fd, err)
 		emit(TelemetryEvent{
-			Type:    "close",
-			FD:      fd,
-			Message: err.Error(),
+			Type:          "close",
+			FD:            fd,
+			Message:       err.Error(),
+			ActiveClients: count,
 		})
 	}
-
-	client.Conn.Close()
-	s.removeClient(fd)
 }
 
 func (s *Server) flushWrite(fd int, client *Client) {
@@ -224,17 +236,21 @@ func (s *Server) flushWrite(fd int, client *Client) {
 }
 
 func main() {
+	portFlag := flag.Int("port", port, "server listening port")
+	flag.Parse()
+	srvPort := *portFlag
+
 	// Enable line-buffered stdout for JSON telemetry
 	scanner := bufio.NewScanner(os.Stdin)
 	_ = scanner
 
-	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", srvPort))
 	if err != nil {
 		emit(TelemetryEvent{
 			Type:    "error",
-			Message: fmt.Sprintf("Failed to bind port %d: %v", port, err),
+			Message: fmt.Sprintf("Failed to bind port %d: %v", srvPort, err),
 		})
-		log.Fatalf("Failed to listen on port %d: %v", port, err)
+		log.Fatalf("Failed to listen on port %d: %v", srvPort, err)
 	}
 	defer ln.Close()
 
@@ -244,12 +260,12 @@ func main() {
 
 	emit(TelemetryEvent{
 		Type:     "init",
-		Port:     port,
+		Port:     srvPort,
 		ListenFD: server.listenFD,
 		EpollFD:  1, // epoll_fd equivalent
 	})
 
-	log.Printf("[Server] Go echo server listening on :%d", port)
+	log.Printf("[Server] Go echo server listening on :%d", srvPort)
 	log.Printf("[Server] JSON telemetry events emitted to stdout")
 	log.Printf("[Server] Open http://localhost:8000 to view the dashboard")
 

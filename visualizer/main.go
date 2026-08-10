@@ -301,6 +301,10 @@ func main() {
 		}
 	}()
 
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	})
 	http.HandleFunc("/events", handleSSE)
 	http.HandleFunc("/api/status", handleAPIStatus)
 	http.HandleFunc("/api/spawn_client", handleSpawnClient)
@@ -312,6 +316,11 @@ func main() {
 	addr := fmt.Sprintf(":%d", visualizerPort)
 	log.Printf("[Visualizer] Dashboard available at http://localhost%s", addr)
 	log.Printf("[Visualizer] SSE endpoint at http://localhost%s/events", addr)
+
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		exec.Command("rundll32", "url.dll,FileProtocolHandler", fmt.Sprintf("http://localhost%s", addr)).Start()
+	}()
 
 	srv := &http.Server{Addr: addr}
 
