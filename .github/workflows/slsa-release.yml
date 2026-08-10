@@ -5,14 +5,13 @@ on:
     tags:
       - 'v*'
 
-permissions: {}
+permissions:
+  id-token: write # Needed for cryptographic signing via Sigstore
+  contents: write # Needed to create the release and upload assets
+  actions: read  # Needed to inspect workflow execution details
 
 jobs:
   build:
-    permissions:
-      id-token: write # For Sigstore signing
-      contents: write # Needed to upload binary & provenance assets to the release
-      actions: read  # Needed to inspect workflow execution details
     uses: slsa-framework/slsa-github-generator/.github/workflows/builder_go_slsa3.yml@v2.0.0
     with:
       config-file: .slsa-goreleaser.yml
