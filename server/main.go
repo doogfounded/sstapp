@@ -42,6 +42,7 @@ func emit(event TelemetryEvent) {
 	data, _ := json.Marshal(event)
 	fmt.Println(string(data))
 	os.Stdout.Sync()
+	logEventToFile(data)
 }
 
 // --- Client state ---

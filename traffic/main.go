@@ -92,6 +92,14 @@ func main() {
 				fmt.Sscanf(os.Args[2], "%d", &count)
 			}
 			runChurnScenario(count)
+		case "stress":
+			conns := 50
+			duration := 10
+			if len(os.Args) >= 4 {
+				fmt.Sscanf(os.Args[2], "%d", &conns)
+				fmt.Sscanf(os.Args[3], "%d", &duration)
+			}
+			runStressScenario(conns, duration)
 		default:
 			fmt.Printf("Unknown scenario: %s\n", os.Args[1])
 			os.Exit(1)

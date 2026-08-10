@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -322,7 +323,7 @@ func main() {
 		exec.Command("rundll32", "url.dll,FileProtocolHandler", fmt.Sprintf("http://localhost%s", addr)).Start()
 	}()
 
-	srv := &http.Server{Addr: addr}
+	srv := &http.Server{Addr: addr, Handler: withLogging(http.DefaultServeMux)}
 
 	stopChan := make(chan os.Signal, 1)
 	signal.Notify(stopChan, os.Interrupt, syscall.SIGTERM)
