@@ -1,0 +1,14 @@
+version: 1
+go-version: "1.22" # Specify your Go version
+
+# Define target binaries to build
+main: ./main.go # Path to your main package
+
+# Optional target platforms (defaults to linux/amd64 if omitted)
+targets:
+  - os: linux
+    arch: amd64
+  - os: windows
+    arch: amd64
+  - os: darwin
+    arch: arm64
